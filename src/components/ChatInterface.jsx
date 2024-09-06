@@ -11,6 +11,7 @@ const ChatInterface = () => {
   const [username, setUsername] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const { toast } = useToast();
   const audioContext = useRef(null);
   const mediaRecorder = useRef(null);
@@ -27,10 +28,26 @@ const ChatInterface = () => {
   }, []);
 
   const connectWebSocket = () => {
+    if (!username) {
+      toast({
+        title: "Username Required",
+        description: "Please enter a username before connecting.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsConnecting(true);
+    toast({
+      title: "Connecting",
+      description: "Attempting to connect to the server...",
+    });
+
     try {
       websocket.current = new WebSocket('wss://your-secure-websocket-url');
       websocket.current.onopen = () => {
         setIsConnected(true);
+        setIsConnecting(false);
         toast({
           title: "Connected",
           description: "Successfully connected to the server.",
@@ -38,6 +55,7 @@ const ChatInterface = () => {
       };
       websocket.current.onclose = () => {
         setIsConnected(false);
+        setIsConnecting(false);
         toast({
           title: "Disconnected",
           description: "Connection to the server closed.",
@@ -46,6 +64,7 @@ const ChatInterface = () => {
       };
       websocket.current.onerror = (error) => {
         console.error('WebSocket error:', error);
+        setIsConnecting(false);
         toast({
           title: "Connection Error",
           description: "Failed to connect to the server. Please try again.",
@@ -55,6 +74,7 @@ const ChatInterface = () => {
       websocket.current.onmessage = handleWebSocketMessage;
     } catch (error) {
       console.error('Error connecting to WebSocket:', error);
+      setIsConnecting(false);
       toast({
         title: "Connection Error",
         description: "Failed to connect to the server. Please check your connection and try again.",
@@ -154,8 +174,11 @@ const ChatInterface = () => {
         <Button onClick={setUserName} disabled={!isConnected || !username}>
           Set Username
         </Button>
-        <Button onClick={connectWebSocket} disabled={isConnected}>
-          {isConnected ? 'Connected' : 'Connect'}
+        <Button 
+          onClick={connectWebSocket} 
+          disabled={isConnected || isConnecting || !username}
+        >
+          {isConnected ? 'Connected' : isConnecting ? 'Connecting...' : 'Connect'}
         </Button>
       </div>
       
