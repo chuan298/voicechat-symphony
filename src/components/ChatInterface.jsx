@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,7 +14,6 @@ const ChatInterface = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const { toast } = useToast();
   const audioContext = useRef(null);
   const mediaRecorder = useRef(null);
   const websocket = useRef(null);
@@ -31,17 +30,14 @@ const ChatInterface = () => {
 
   const connectWebSocket = () => {
     if (!username) {
-      toast({
-        title: "Username Required",
+      toast.error("Username Required", {
         description: "Please enter a username before connecting.",
-        variant: "destructive",
       });
       return;
     }
 
     setIsConnecting(true);
-    toast({
-      title: "Connecting",
+    toast.info("Connecting", {
       description: "Attempting to connect to the server...",
     });
 
@@ -59,8 +55,7 @@ const ChatInterface = () => {
   const handleWebSocketOpen = () => {
     setIsConnected(true);
     setIsConnecting(false);
-    toast({
-      title: "Connected",
+    toast.success("Connected", {
       description: "Successfully connected to the server.",
     });
   };
@@ -68,10 +63,8 @@ const ChatInterface = () => {
   const handleWebSocketClose = () => {
     setIsConnected(false);
     setIsConnecting(false);
-    toast({
-      title: "Disconnected",
+    toast.error("Disconnected", {
       description: "Connection to the server closed.",
-      variant: "destructive",
     });
   };
 
@@ -82,10 +75,8 @@ const ChatInterface = () => {
 
   const handleConnectionError = (error) => {
     setIsConnecting(false);
-    toast({
-      title: "Connection Error",
+    toast.error("Connection Error", {
       description: "Failed to connect to the server. Please check your connection and try again.",
-      variant: "destructive",
     });
   };
 
@@ -104,14 +95,11 @@ const ChatInterface = () => {
 
   const handleUsernameResponse = (data) => {
     if (data.exists) {
-      toast({
-        title: "Username already exists",
+      toast.error("Username already exists", {
         description: "Please choose a different username.",
-        variant: "destructive",
       });
     } else {
-      toast({
-        title: "Username set",
+      toast.success("Username set", {
         description: `Welcome, ${username}!`,
       });
     }
@@ -121,16 +109,12 @@ const ChatInterface = () => {
     if (username && isConnected) {
       websocket.current.send(JSON.stringify({ type: 'setUsername', username }));
     } else if (!isConnected) {
-      toast({
-        title: "Not Connected",
+      toast.error("Not Connected", {
         description: "Please connect to the server first.",
-        variant: "destructive",
       });
     } else {
-      toast({
-        title: "Invalid Username",
+      toast.error("Invalid Username", {
         description: "Please enter a valid username.",
-        variant: "destructive",
       });
     }
   };
@@ -160,10 +144,8 @@ const ChatInterface = () => {
 
   const handleRecordingError = (err) => {
     console.error('Error accessing microphone:', err);
-    toast({
-      title: "Microphone Error",
+    toast.error("Microphone Error", {
       description: "Unable to access the microphone. Please check your permissions and try again.",
-      variant: "destructive",
     });
   };
 
