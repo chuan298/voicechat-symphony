@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar } from "@/components/ui/avatar";
-import { UserIcon, BotIcon, MicIcon, MicOffIcon } from 'lucide-react';
+import { UserIcon, BotIcon, MicIcon, MicOffIcon, SendIcon } from 'lucide-react';
 import ConnectionControls from './ConnectionControls';
 import MessageList from './MessageList';
 
@@ -14,6 +14,7 @@ const ChatInterface = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [inputMessage, setInputMessage] = useState('');
   const audioContext = useRef(null);
   const mediaRecorder = useRef(null);
   const websocket = useRef(null);
@@ -159,8 +160,16 @@ const ChatInterface = () => {
     });
   };
 
+  const handleSendMessage = () => {
+    if (inputMessage.trim() && isConnected) {
+      setMessages(prev => [...prev, { role: 'user', content: inputMessage.trim() }]);
+      websocket.current.send(JSON.stringify({ type: 'chat', text: inputMessage.trim() }));
+      setInputMessage('');
+    }
+  };
+
   return (
-    <div className="flex flex-col h-screen max-w-2xl mx-auto p-4">
+    <div className="flex flex-col h-[calc(100vh-200px)] max-w-full mx-auto">
       <ConnectionControls
         username={username}
         setUsername={setUsername}
@@ -170,23 +179,33 @@ const ChatInterface = () => {
         setUserName={setUserName}
       />
       
-      <MessageList messages={messages} />
+      <div className="flex-grow overflow-hidden">
+        <MessageList messages={messages} />
+      </div>
       
-      <Button 
-        onClick={toggleRecording} 
-        disabled={!isConnected || !username}
-        className={`w-full ${isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'}`}
-      >
-        {isRecording ? (
-          <>
-            <MicOffIcon className="mr-2 h-4 w-4" /> Stop Recording
-          </>
-        ) : (
-          <>
-            <MicIcon className="mr-2 h-4 w-4" /> Start Recording
-          </>
-        )}
-      </Button>
+      <div className="flex space-x-2 mt-4">
+        <Input
+          type="text"
+          placeholder="Type your message..."
+          value={inputMessage}
+          onChange={(e) => setInputMessage(e.target.value)}
+          onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+          className="flex-grow"
+        />
+        <Button 
+          onClick={handleSendMessage}
+          disabled={!isConnected || !inputMessage.trim()}
+        >
+          <SendIcon className="h-4 w-4" />
+        </Button>
+        <Button 
+          onClick={toggleRecording} 
+          disabled={!isConnected || !username}
+          className={`${isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'}`}
+        >
+          {isRecording ? <MicOffIcon className="h-4 w-4" /> : <MicIcon className="h-4 w-4" />}
+        </Button>
+      </div>
     </div>
   );
 };
