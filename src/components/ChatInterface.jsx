@@ -27,10 +27,40 @@ const ChatInterface = () => {
   }, []);
 
   const connectWebSocket = () => {
-    websocket.current = new WebSocket('ws://your-websocket-url');
-    websocket.current.onopen = () => setIsConnected(true);
-    websocket.current.onclose = () => setIsConnected(false);
-    websocket.current.onmessage = handleWebSocketMessage;
+    try {
+      websocket.current = new WebSocket('wss://your-secure-websocket-url');
+      websocket.current.onopen = () => {
+        setIsConnected(true);
+        toast({
+          title: "Connected",
+          description: "Successfully connected to the server.",
+        });
+      };
+      websocket.current.onclose = () => {
+        setIsConnected(false);
+        toast({
+          title: "Disconnected",
+          description: "Connection to the server closed.",
+          variant: "destructive",
+        });
+      };
+      websocket.current.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        toast({
+          title: "Connection Error",
+          description: "Failed to connect to the server. Please try again.",
+          variant: "destructive",
+        });
+      };
+      websocket.current.onmessage = handleWebSocketMessage;
+    } catch (error) {
+      console.error('Error connecting to WebSocket:', error);
+      toast({
+        title: "Connection Error",
+        description: "Failed to connect to the server. Please check your connection and try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleWebSocketMessage = (event) => {
@@ -60,6 +90,18 @@ const ChatInterface = () => {
   const setUserName = () => {
     if (username && isConnected) {
       websocket.current.send(JSON.stringify({ type: 'setUsername', username }));
+    } else if (!isConnected) {
+      toast({
+        title: "Not Connected",
+        description: "Please connect to the server first.",
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Invalid Username",
+        description: "Please enter a valid username.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -69,7 +111,7 @@ const ChatInterface = () => {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorder.current = new MediaRecorder(stream);
         mediaRecorder.current.ondataavailable = (event) => {
-          if (event.data.size > 0 && websocket.current) {
+          if (event.data.size > 0 && websocket.current && websocket.current.readyState === WebSocket.OPEN) {
             websocket.current.send(event.data);
           }
         };
@@ -79,7 +121,7 @@ const ChatInterface = () => {
         console.error('Error accessing microphone:', err);
         toast({
           title: "Microphone Error",
-          description: "Unable to access the microphone.",
+          description: "Unable to access the microphone. Please check your permissions and try again.",
           variant: "destructive",
         });
       }
