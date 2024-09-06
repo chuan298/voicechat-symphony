@@ -3,7 +3,6 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar } from "@/components/ui/avatar";
 import { UserIcon, BotIcon, MicIcon, MicOffIcon, SendIcon } from 'lucide-react';
 import ConnectionControls from './ConnectionControls';
 import MessageList from './MessageList';
@@ -18,7 +17,6 @@ const ChatInterface = () => {
   const audioContext = useRef(null);
   const mediaRecorder = useRef(null);
   const websocket = useRef(null);
-  const audioElement = useRef(new Audio());
 
   useEffect(() => {
     audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -83,10 +81,8 @@ const ChatInterface = () => {
 
   const handleWebSocketMessage = (event) => {
     const data = JSON.parse(event.data);
-    if (data.type === 'stt') {
-      setMessages(prev => [...prev, { role: 'user', content: data.text }]);
-    } else if (data.type === 'llm') {
-      setMessages(prev => [...prev, { role: 'bot', content: data.text }]);
+    if (data.type === 'stt' || data.type === 'llm') {
+      setMessages(prev => [...prev, { role: data.type === 'stt' ? 'user' : 'bot', content: data.text }]);
     } else if (data.type === 'tts') {
       playAudioStream(data.audio);
     } else if (data.type === 'username') {
@@ -169,7 +165,7 @@ const ChatInterface = () => {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-200px)] max-w-full mx-auto">
+    <div className="flex flex-col h-[calc(100vh-300px)] max-w-full mx-auto">
       <ConnectionControls
         username={username}
         setUsername={setUsername}
@@ -191,6 +187,7 @@ const ChatInterface = () => {
           onChange={(e) => setInputMessage(e.target.value)}
           onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
           className="flex-grow"
+          disabled={!isConnected}
         />
         <Button 
           onClick={handleSendMessage}

@@ -5,7 +5,7 @@ import { UserIcon, BotIcon } from 'lucide-react';
 
 const MessageList = ({ messages }) => {
   return (
-    <ScrollArea className="flex-grow mb-4 border rounded-md p-2">
+    <ScrollArea className="h-full pr-4">
       {messages.map((msg, index) => (
         <div key={index} className={`flex items-start mb-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
           <Avatar className={msg.role === 'user' ? 'order-2 ml-2' : 'order-1 mr-2'}>
