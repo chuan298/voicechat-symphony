@@ -1,72 +1,63 @@
-# Welcome to your GPT Engineer project
+# Voice Chat Symphony
 
-## Project info
+This project is a React-based frontend for a voice chat bot that interacts with a WebSocket server for real-time communication.
 
-**Project**: voicechat-symphony
+## Features
 
-**URL**: https://run.gptengineer.app/projects/4302dafd-fff4-4194-8fbc-f7a059b06a2b/improve
+- Stream audio from microphone and receive/play audio streams
+- Chat box displaying user and bot messages with icons
+- Username setting functionality with server-side validation
+- Modern UI using Tailwind CSS
 
-## How can I edit this code?
+## Prerequisites
 
-There are several ways of editing your application.
+- Node.js (v14 or later)
+- npm (v6 or later)
 
-**Use GPT Engineer**
+## Installation
 
-Simply visit the GPT Engineer project at [GPT Engineer](https://gptengineer.app/projects/4302dafd-fff4-4194-8fbc-f7a059b06a2b/improve) and start prompting.
+1. Clone the repository:
+   ```
+   git clone <repository-url>
+   cd voicechat-symphony
+   ```
 
-Changes made via gptengineer.app will be committed automatically to this repo.
+2. Install dependencies:
+   ```
+   npm install
+   ```
 
-**Use your preferred IDE**
+## Running the Application
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in the GPT Engineer UI.
+1. Start the development server:
+   ```
+   npm run dev
+   ```
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+2. Open your browser and navigate to `http://localhost:5173` (or the port specified in the console output).
 
-Follow these steps:
+## Usage
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+1. Set your username in the input field at the top of the chat interface.
+2. Click the "Connect" button to establish a WebSocket connection.
+3. Once connected, click the "Start Recording" button to begin speaking.
+4. The chat interface will display your transcribed messages and the bot's responses.
+5. Click "Stop Recording" when you're done speaking.
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+## Configuration
 
-# Step 3: Install the necessary dependencies.
-npm i
+Make sure to update the WebSocket URL in `src/components/ChatInterface.jsx`:
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```javascript
+websocket.current = new WebSocket('ws://your-websocket-url');
 ```
 
-**Edit a file directly in GitHub**
+Replace `'ws://your-websocket-url'` with the actual URL of your WebSocket server.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Contributing
 
-**Use GitHub Codespaces**
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## License
 
-## What technologies are used for this project?
-
-This project is built with .
-
-- Vite
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-All GPT Engineer projects can be deployed directly via the GPT Engineer app.
-
-Simply visit your project at [GPT Engineer](https://gptengineer.app/projects/4302dafd-fff4-4194-8fbc-f7a059b06a2b/improve) and click on Share -> Publish.
-
-## I want to use a custom domain - is that possible?
-
-We don't support custom domains (yet). If you want to deploy your project under your own domain then we recommend using Netlify. Visit our docs for more details: [Custom domains](https://docs.gptengineer.app/tips-tricks/custom-domain/)
+This project is licensed under the MIT License.
