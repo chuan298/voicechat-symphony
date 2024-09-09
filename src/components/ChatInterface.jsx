@@ -6,10 +6,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { UserIcon, BotIcon, MicIcon, MicOffIcon, SendIcon } from 'lucide-react';
 import ConnectionControls from './ConnectionControls';
 import MessageList from './MessageList';
+import { setUsername, connectWebSocket } from '../utils/api';
 
 const ChatInterface = () => {
   const [messages, setMessages] = useState([]);
-  const [username, setUsername] = useState('');
+  const [username, setUsernameState] = useState('');
+  const [sessionId, setSessionId] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -27,7 +29,7 @@ const ChatInterface = () => {
     };
   }, []);
 
-  const connectWebSocket = () => {
+  const handleSetUsername = async () => {
     if (!username) {
       toast.error("Username Required", {
         description: "Please enter a username before connecting.",
@@ -35,13 +37,29 @@ const ChatInterface = () => {
       return;
     }
 
+    try {
+      const response = await setUsername(username);
+      setSessionId(response.sessionId);
+      toast.success("Username set", {
+        description: `Welcome, ${username}!`,
+      });
+      initializeWebSocket(response.sessionId);
+    } catch (error) {
+      toast.error("Username Error", {
+        description: error.message || "Failed to set username. Please try again.",
+      });
+    }
+  };
+
+  const initializeWebSocket = async (sessionId) => {
     setIsConnecting(true);
     toast.info("Connecting", {
       description: "Attempting to connect to the server...",
     });
 
     try {
-      websocket.current = new WebSocket('wss://your-secure-websocket-url');
+      const ws = await connectWebSocket(sessionId);
+      websocket.current = ws;
       websocket.current.onopen = handleWebSocketOpen;
       websocket.current.onclose = handleWebSocketClose;
       websocket.current.onerror = handleWebSocketError;
@@ -85,34 +103,6 @@ const ChatInterface = () => {
       setMessages(prev => [...prev, { role: data.type === 'stt' ? 'user' : 'bot', content: data.text }]);
     } else if (data.type === 'tts') {
       playAudioStream(data.audio);
-    } else if (data.type === 'username') {
-      handleUsernameResponse(data);
-    }
-  };
-
-  const handleUsernameResponse = (data) => {
-    if (data.exists) {
-      toast.error("Username already exists", {
-        description: "Please choose a different username.",
-      });
-    } else {
-      toast.success("Username set", {
-        description: `Welcome, ${username}!`,
-      });
-    }
-  };
-
-  const setUserName = () => {
-    if (username && isConnected) {
-      websocket.current.send(JSON.stringify({ type: 'setUsername', username }));
-    } else if (!isConnected) {
-      toast.error("Not Connected", {
-        description: "Please connect to the server first.",
-      });
-    } else {
-      toast.error("Invalid Username", {
-        description: "Please enter a valid username.",
-      });
     }
   };
 
@@ -165,21 +155,20 @@ const ChatInterface = () => {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-300px)] max-w-full mx-auto">
+    <div className="flex flex-col h-full max-w-full mx-auto">
       <ConnectionControls
         username={username}
-        setUsername={setUsername}
+        setUsername={setUsernameState}
         isConnected={isConnected}
         isConnecting={isConnecting}
-        connectWebSocket={connectWebSocket}
-        setUserName={setUserName}
+        handleSetUsername={handleSetUsername}
       />
       
-      <div className="flex-grow overflow-hidden">
+      <div className="flex-grow overflow-hidden mb-4">
         <MessageList messages={messages} />
       </div>
       
-      <div className="flex space-x-2 mt-4">
+      <div className="flex space-x-2">
         <Input
           type="text"
           placeholder="Type your message..."
@@ -197,7 +186,7 @@ const ChatInterface = () => {
         </Button>
         <Button 
           onClick={toggleRecording} 
-          disabled={!isConnected || !username}
+          disabled={!isConnected}
           className={`${isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'}`}
         >
           {isRecording ? <MicOffIcon className="h-4 w-4" /> : <MicIcon className="h-4 w-4" />}

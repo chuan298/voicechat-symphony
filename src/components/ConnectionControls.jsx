@@ -2,7 +2,7 @@ import React from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-const ConnectionControls = ({ username, setUsername, isConnected, isConnecting, connectWebSocket, setUserName }) => {
+const ConnectionControls = ({ username, setUsername, isConnected, isConnecting, handleSetUsername }) => {
   return (
     <div className="mb-4 flex items-center space-x-2">
       <Input
@@ -11,12 +11,10 @@ const ConnectionControls = ({ username, setUsername, isConnected, isConnecting, 
         value={username}
         onChange={(e) => setUsername(e.target.value)}
         className="flex-grow"
+        disabled={isConnected}
       />
-      <Button onClick={setUserName} disabled={!isConnected || !username}>
-        Set Username
-      </Button>
       <Button 
-        onClick={connectWebSocket} 
+        onClick={handleSetUsername} 
         disabled={isConnected || isConnecting || !username}
       >
         {isConnected ? 'Connected' : isConnecting ? 'Connecting...' : 'Connect'}
