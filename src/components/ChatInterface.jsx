@@ -32,6 +32,10 @@ const ChatInterface = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const audioQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
+  // const [isTTSEnded, setIsTTSEnded] = useState(false);
+  const isTTSEndedRef = useRef(false);
+  const ttsEndTimeoutRef = useRef(null);
+  const [lastWarningTime, setLastWarningTime] = useState(0);
 
   useEffect(() => {
     audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
@@ -148,6 +152,15 @@ const ChatInterface = () => {
           }
           return prev;
         });
+      } else if (data.type === 'system' && data.data === 'tts_end') {
+        isTTSEndedRef.current = true;
+        // // Set a timeout in case the last buffer doesn't trigger onended
+        // ttsEndTimeoutRef.current = setTimeout(() => {
+        //   if (isPlayingRef.current) {
+        //     isPlayingRef.current = false;
+        //     setIsPlaying(false);
+        //   }
+        // }, 1000); // Adjust timeout as needed
       } else if (data.type === 'llm') {
         setMessages(prev => {
           const newMessages = [...prev];
@@ -171,18 +184,12 @@ const ChatInterface = () => {
   };
 
   const toggleRecording = async () => {
-    if (isPlayingRef.current) {
-      toast.warning("Audio Playing", {
-        description: "Please wait for the audio to finish playing before recording.",
-      });
-      return;
-    }
     if (!isRecording) {
       try {
         console.log('Attempting to start recording...');
         console.log(`AUDIO_CHUNK_SIZE: ${AUDIO_CHUNK_SIZE}`);
         console.log(`AUDIO_SAMPLE_RATE: ${AUDIO_SAMPLE_RATE}`);
-  
+
         stream.current = await navigator.mediaDevices.getUserMedia({ 
           audio: {
             sampleRate: AUDIO_SAMPLE_RATE,
@@ -193,7 +200,7 @@ const ChatInterface = () => {
         });
         
         console.log('Got user media stream');
-  
+
         if (!audioContext.current) {
           audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
             sampleRate: AUDIO_SAMPLE_RATE
@@ -202,13 +209,13 @@ const ChatInterface = () => {
         
         await audioContext.current.resume();
         console.log('Audio context resumed');
-  
+
         mediaStreamSource.current = audioContext.current.createMediaStreamSource(stream.current);
         console.log('Media stream source created');
-  
+
         processor.current = audioContext.current.createScriptProcessor(AUDIO_CHUNK_SIZE, 1, 1);
         console.log(`Script processor created with buffer size: ${AUDIO_CHUNK_SIZE}`);
-  
+
         processor.current.onaudioprocess = handleAudioProcess;
         mediaStreamSource.current.connect(processor.current);
         processor.current.connect(audioContext.current.destination);
@@ -242,6 +249,22 @@ const ChatInterface = () => {
   };
 
   const handleAudioProcess = (e) => {
+    console.log('handleAudioProcess called. isPlayingRef.current:', isPlayingRef.current);
+    if (isPlayingRef.current) {
+      console.log("Audio is currently playing. Skipping audio processing.");
+      
+      // Show warning toast, but limit frequency to avoid spam
+      // const currentTime = Date.now();
+      // if (currentTime - lastWarningTime > 3000) { // Show warning every 3 seconds at most
+      //   toast.warning("Recording Paused", {
+      //     description: "Recording is paused while audio is playing.",
+      //   });
+      //   setLastWarningTime(currentTime);
+      // }
+      
+      return;
+    }
+
     if (websocket.current && websocket.current.readyState === WebSocket.OPEN) {
       const inputData = e.inputBuffer.getChannelData(0);
       const int16Array = new Int16Array(AUDIO_CHUNK_SIZE);
@@ -275,11 +298,11 @@ const ChatInterface = () => {
         throw new Error("Unsupported audio data type received");
       }
 
-      console.log('Received audio data size:', arrayBuffer.byteLength, 'bytes');
-
+      console.log('Adding audio to queue. Current queue length:', audioQueueRef.current.length);
       audioQueueRef.current.push(arrayBuffer);
       
       if (!isPlayingRef.current) {
+        console.log('Starting audio playback');
         playNextInQueue();
       }
     } catch (error) {
@@ -291,12 +314,21 @@ const ChatInterface = () => {
   };
 
   const playNextInQueue = async () => {
+    console.log('playNextInQueue called. Queue length:', audioQueueRef.current.length);
+    console.log('isTTSEndedRef.current:', isTTSEndedRef.current);
     if (audioQueueRef.current.length === 0) {
-      isPlayingRef.current = false;
+      if (isTTSEndedRef.current) {
+        console.log('Audio playback finished. No more audio in queue and TTS ended.');
+        isPlayingRef.current = false;
+        setIsPlaying(false);
+        setIsTTSEnded(false);
+      }
       return;
     }
 
     isPlayingRef.current = true;
+    setIsPlaying(true);
+    console.log('Starting to play next audio in queue');
     const arrayBuffer = audioQueueRef.current.shift();
 
     try {
@@ -315,8 +347,14 @@ const ChatInterface = () => {
       source.start();
 
       source.onended = () => {
-        console.log('Audio playback finished.');
-        playNextInQueue(); // Play the next audio in queue when this one finishes
+        console.log('Audio buffer playback finished.');
+        if (audioQueueRef.current.length === 0 && isTTSEndedRef.current) {
+          console.log('All audio playback finished.');
+          isPlayingRef.current = false;
+          setIsPlaying(false);
+          isTTSEndedRef.current = false;
+        }
+        playNextInQueue();
       };
 
     } catch (error) {
@@ -368,7 +406,7 @@ const ChatInterface = () => {
         </Button>
         <Button 
           onClick={toggleRecording} 
-          disabled={!isConnected}
+          disabled={!isConnected || isPlaying}
           className={`${isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'}`}
         >
           {isRecording ? <MicOffIcon className="h-4 w-4" /> : <MicIcon className="h-4 w-4" />}
