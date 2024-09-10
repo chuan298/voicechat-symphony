@@ -7,6 +7,12 @@ import { UserIcon, BotIcon, MicIcon, MicOffIcon, SendIcon } from 'lucide-react';
 import ConnectionControls from './ConnectionControls';
 import MessageList from './MessageList';
 import { setUsername, connectWebSocket } from '../utils/api';
+import { arrayBufferToBase64 } from '../utils/audioUtils';
+import { encodeWAV } from '../utils/audioUtils';
+
+const AUDIO_CHUNK_SIZE = 1024; 
+const AUDIO_SAMPLE_RATE = 16000; // 16 kHz sample rate
+const DEFAULT_PLAYBACK_RATE = 1.2;
 
 const ChatInterface = () => {
   const [messages, setMessages] = useState([]);
@@ -19,14 +25,32 @@ const ChatInterface = () => {
   const audioContext = useRef(null);
   const mediaRecorder = useRef(null);
   const websocket = useRef(null);
+  const lastBotMessageRef = useRef(null);
+  const mediaStreamSource = useRef(null);
+  const processor = useRef(null);
+  const stream = useRef(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const audioQueueRef = useRef([]);
+  const isPlayingRef = useRef(false);
 
   useEffect(() => {
-    audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
+    audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: AUDIO_SAMPLE_RATE
+    });
     return () => {
       if (websocket.current) {
         websocket.current.close();
       }
+      if (audioContext.current) {
+        audioContext.current.close();
+      }
     };
+  }, []);
+
+  useEffect(() => {
+    if (audioQueueRef.current.length > 0 && !isPlayingRef.current) {
+      playNextInQueue();
+    }
   }, []);
 
   const handleSetUsername = async () => {
@@ -39,11 +63,11 @@ const ChatInterface = () => {
 
     try {
       const response = await setUsername(username);
-      setSessionId(response.sessionId);
+      setSessionId(response.session_id);
       toast.success("Username set", {
         description: `Welcome, ${username}!`,
       });
-      initializeWebSocket(response.sessionId);
+      initializeWebSocket(response.session_id);
     } catch (error) {
       toast.error("Username Error", {
         description: error.message || "Failed to set username. Please try again.",
@@ -56,14 +80,14 @@ const ChatInterface = () => {
     toast.info("Connecting", {
       description: "Attempting to connect to the server...",
     });
-
     try {
-      const ws = await connectWebSocket(sessionId);
+      const ws = connectWebSocket(sessionId);
       websocket.current = ws;
-      websocket.current.onopen = handleWebSocketOpen;
-      websocket.current.onclose = handleWebSocketClose;
-      websocket.current.onerror = handleWebSocketError;
-      websocket.current.onmessage = handleWebSocketMessage;
+      
+      ws.onopen = handleWebSocketOpen;
+      ws.onclose = handleWebSocketClose;
+      ws.onerror = handleWebSocketError;
+      ws.onmessage = handleWebSocketMessage;
     } catch (error) {
       handleConnectionError(error);
     }
@@ -98,34 +122,137 @@ const ChatInterface = () => {
   };
 
   const handleWebSocketMessage = (event) => {
-    const data = JSON.parse(event.data);
-    if (data.type === 'stt' || data.type === 'llm') {
-      setMessages(prev => [...prev, { role: data.type === 'stt' ? 'user' : 'bot', content: data.text }]);
-    } else if (data.type === 'tts') {
-      playAudioStream(data.audio);
+    console.log('Received WebSocket message:', event.data);
+    if (typeof event.data === 'string') {
+      const data = JSON.parse(event.data);
+      console.log('Received message:', data);
+      
+      if (data.type === 'stt') {
+        setMessages(prev => {
+          const newMessages = [...prev];
+          if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'user') {
+            // Cập nhật tin nhắn cuối cùng của người dùng
+            newMessages[newMessages.length - 1].content = data.data;
+          } else {
+            // Nếu không có tin nhắn người dùng, tạo mới
+            newMessages.push({ role: 'user', content: data.data });
+          }
+          return newMessages;
+        });
+      } else if (data.type === 'system' && data.data === 'stt_end') {
+        // Khi nhận được tín hiệu kết thúc STT, chuẩn bị cho tin nhắn bot tiếp theo
+        setMessages(prev => {
+          if (prev[prev.length - 1].role === 'user') {
+            // Chỉ thêm tin nhắn bot mới nếu tin nhắn cuối cùng là của user
+            return [...prev, { role: 'bot', content: '' }];
+          }
+          return prev;
+        });
+      } else if (data.type === 'llm') {
+        setMessages(prev => {
+          const newMessages = [...prev];
+          if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'bot') {
+            // Append vào tin nhắn bot cuối cùng
+            newMessages[newMessages.length - 1].content += data.data;
+          } else {
+            // Tạo tin nhắn bot mới nếu cần
+            newMessages.push({ role: 'bot', content: data.data });
+          }
+          return newMessages;
+        });
+      }
+    } else if (event.data instanceof Blob) {
+      // Xử lý dữ liệu âm thanh
+      console.log('Received audio blob:', event.data);
+      event.data.arrayBuffer().then(buffer => {
+        playAudioStream(buffer);
+      });
     }
   };
 
   const toggleRecording = async () => {
+    if (isPlayingRef.current) {
+      toast.warning("Audio Playing", {
+        description: "Please wait for the audio to finish playing before recording.",
+      });
+      return;
+    }
     if (!isRecording) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder.current = new MediaRecorder(stream);
-        mediaRecorder.current.ondataavailable = handleAudioData;
-        mediaRecorder.current.start(100);
+        console.log('Attempting to start recording...');
+        console.log(`AUDIO_CHUNK_SIZE: ${AUDIO_CHUNK_SIZE}`);
+        console.log(`AUDIO_SAMPLE_RATE: ${AUDIO_SAMPLE_RATE}`);
+  
+        stream.current = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            sampleRate: AUDIO_SAMPLE_RATE,
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+          } 
+        });
+        
+        console.log('Got user media stream');
+  
+        if (!audioContext.current) {
+          audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: AUDIO_SAMPLE_RATE
+          });
+        }
+        
+        await audioContext.current.resume();
+        console.log('Audio context resumed');
+  
+        mediaStreamSource.current = audioContext.current.createMediaStreamSource(stream.current);
+        console.log('Media stream source created');
+  
+        processor.current = audioContext.current.createScriptProcessor(AUDIO_CHUNK_SIZE, 1, 1);
+        console.log(`Script processor created with buffer size: ${AUDIO_CHUNK_SIZE}`);
+  
+        processor.current.onaudioprocess = handleAudioProcess;
+        mediaStreamSource.current.connect(processor.current);
+        processor.current.connect(audioContext.current.destination);
+        
         setIsRecording(true);
+        console.log(`Recording started with sample rate: ${AUDIO_SAMPLE_RATE} Hz, chunk size: ${AUDIO_CHUNK_SIZE}`);
       } catch (err) {
+        console.error('Error in toggleRecording:', err);
         handleRecordingError(err);
       }
     } else {
-      mediaRecorder.current.stop();
-      setIsRecording(false);
+      stopRecording();
     }
   };
 
-  const handleAudioData = (event) => {
-    if (event.data.size > 0 && websocket.current && websocket.current.readyState === WebSocket.OPEN) {
-      websocket.current.send(event.data);
+  const stopRecording = () => {
+    if (processor.current) {
+      processor.current.disconnect();
+      processor.current = null;
+    }
+    if (mediaStreamSource.current) {
+      mediaStreamSource.current.disconnect();
+      mediaStreamSource.current = null;
+    }
+    if (stream.current) {
+      stream.current.getTracks().forEach(track => track.stop());
+      stream.current = null;
+    }
+    setIsRecording(false);
+    console.log('Recording stopped');
+  };
+
+  const handleAudioProcess = (e) => {
+    if (websocket.current && websocket.current.readyState === WebSocket.OPEN) {
+      const inputData = e.inputBuffer.getChannelData(0);
+      const int16Array = new Int16Array(AUDIO_CHUNK_SIZE);
+      
+      for (let i = 0; i < AUDIO_CHUNK_SIZE; i++) {
+        int16Array[i] = Math.max(-32768, Math.min(32767, Math.floor(inputData[i] * 32767)));
+      }
+      
+      const chunk = int16Array.buffer;
+      console.log(`Sending audio chunk of size: ${chunk.byteLength} bytes`);
+      websocket.current.send(chunk);
     }
   };
 
@@ -134,23 +261,78 @@ const ChatInterface = () => {
     toast.error("Microphone Error", {
       description: "Unable to access the microphone. Please check your permissions and try again.",
     });
+    setIsRecording(false);
   };
 
-  const playAudioStream = (audioData) => {
-    const arrayBuffer = new Uint8Array(audioData).buffer;
-    audioContext.current.decodeAudioData(arrayBuffer, (buffer) => {
-      const source = audioContext.current.createBufferSource();
-      source.buffer = buffer;
-      source.connect(audioContext.current.destination);
-      source.start(0);
-    });
+  const playAudioStream = async (audioData) => {
+    try {
+      let arrayBuffer;
+      if (audioData instanceof ArrayBuffer) {
+        arrayBuffer = audioData;
+      } else if (audioData.arrayBuffer) {
+        arrayBuffer = await audioData.arrayBuffer();
+      } else {
+        throw new Error("Unsupported audio data type received");
+      }
+
+      console.log('Received audio data size:', arrayBuffer.byteLength, 'bytes');
+
+      audioQueueRef.current.push(arrayBuffer);
+      
+      if (!isPlayingRef.current) {
+        playNextInQueue();
+      }
+    } catch (error) {
+      console.error('Error handling audio stream:', error);
+      toast.error("Audio Error", {
+        description: "An error occurred while processing the audio data.",
+      });
+    }
   };
+
+  const playNextInQueue = async () => {
+    if (audioQueueRef.current.length === 0) {
+      isPlayingRef.current = false;
+      return;
+    }
+
+    isPlayingRef.current = true;
+    const arrayBuffer = audioQueueRef.current.shift();
+
+    try {
+      const audioBuffer = audioContext.current.createBuffer(1, arrayBuffer.byteLength / 2, AUDIO_SAMPLE_RATE);
+      const channelData = audioBuffer.getChannelData(0);
+      const int16Array = new Int16Array(arrayBuffer);
+
+      for (let i = 0; i < int16Array.length; i++) {
+        channelData[i] = int16Array[i] / 32768.0; // Convert Int16 to Float32
+      }
+
+      const source = audioContext.current.createBufferSource();
+      source.buffer = audioBuffer;
+      source.playbackRate.value = DEFAULT_PLAYBACK_RATE; // Thêm dòng này
+      source.connect(audioContext.current.destination);
+      source.start();
+
+      source.onended = () => {
+        console.log('Audio playback finished.');
+        playNextInQueue(); // Play the next audio in queue when this one finishes
+      };
+
+    } catch (error) {
+      console.error('Error playing audio:', error);
+      playNextInQueue(); // Try to play the next audio if there's an error
+    }
+  };
+  
+  
 
   const handleSendMessage = () => {
     if (inputMessage.trim() && isConnected) {
       setMessages(prev => [...prev, { role: 'user', content: inputMessage.trim() }]);
-      websocket.current.send(JSON.stringify({ type: 'chat', text: inputMessage.trim() }));
+      websocket.current.send(JSON.stringify({ text: inputMessage.trim() }));
       setInputMessage('');
+      lastBotMessageRef.current = null;
     }
   };
 

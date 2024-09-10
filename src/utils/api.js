@@ -1,4 +1,4 @@
-const API_BASE_URL = 'https://your-api-base-url.com';
+const API_BASE_URL = 'http://localhost:8000/api';
 
 export const setUsername = async (username) => {
   try {
@@ -11,7 +11,8 @@ export const setUsername = async (username) => {
     });
 
     if (!response.ok) {
-      throw new Error('Failed to set username');
+      const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to set username');
     }
 
     const data = await response.json();
@@ -22,11 +23,7 @@ export const setUsername = async (username) => {
   }
 };
 
-export const connectWebSocket = async (sessionId) => {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://your-websocket-url.com?sessionId=${sessionId}`);
-    
-    ws.onopen = () => resolve(ws);
-    ws.onerror = (error) => reject(error);
-  });
+export const connectWebSocket = (sessionId) => {
+  const ws = new WebSocket(`ws://localhost:8000/api/ws/${sessionId}`);
+  return ws;
 };
