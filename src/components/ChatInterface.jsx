@@ -73,7 +73,7 @@ const ChatInterface = () => {
       });
       initializeWebSocket(response.session_id);
     } catch (error) {
-      toast.error("Username Error", {
+      toast.error("Error", {
         description: error.message || "Failed to set username. Please try again.",
       });
     }

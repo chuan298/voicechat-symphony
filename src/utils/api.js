@@ -1,8 +1,29 @@
 const API_BASE_URL = 'http://localhost:8000/api';
+const FETCH_TIMEOUT = 5000;
+
+const fetchWithTimeout = async (url, options) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(id);
+    return response;
+  } catch (error) {
+    clearTimeout(id);
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out');
+    }
+    throw error;
+  }
+};
 
 export const setUsername = async (username) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/set_username`, {
+    const response = await fetchWithTimeout(`${API_BASE_URL}/set_username`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -10,12 +31,12 @@ export const setUsername = async (username) => {
       body: JSON.stringify({ username }),
     });
 
+    const data = await response.json();
+    console.log('setUsername response:', data);
     if (!response.ok) {
-      const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to set username');
+      throw new Error(data.detail || 'Failed to set username');
     }
 
-    const data = await response.json();
     return data;
   } catch (error) {
     console.error('Error setting username:', error);
