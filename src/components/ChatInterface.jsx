@@ -11,8 +11,9 @@ import { arrayBufferToBase64 } from '../utils/audioUtils';
 import { encodeWAV } from '../utils/audioUtils';
 
 const AUDIO_CHUNK_SIZE = 1024; 
-const AUDIO_SAMPLE_RATE = 16000; // 16 kHz sample rate
-const DEFAULT_PLAYBACK_RATE = 1.2;
+const RECORD_AUDIO_SAMPLE_RATE = 16000; // 16 kHz sample rate
+const PLAYBACK_AUDIO_SAMPLE_RATE = 22050;
+const DEFAULT_PLAYBACK_RATE = 1;
 
 const ChatInterface = () => {
   const [messages, setMessages] = useState([]);
@@ -23,7 +24,6 @@ const ChatInterface = () => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [inputMessage, setInputMessage] = useState('');
   const audioContext = useRef(null);
-  const mediaRecorder = useRef(null);
   const websocket = useRef(null);
   const lastBotMessageRef = useRef(null);
   const mediaStreamSource = useRef(null);
@@ -35,11 +35,10 @@ const ChatInterface = () => {
   // const [isTTSEnded, setIsTTSEnded] = useState(false);
   const isTTSEndedRef = useRef(false);
   const ttsEndTimeoutRef = useRef(null);
-  const [lastWarningTime, setLastWarningTime] = useState(0);
 
   useEffect(() => {
     audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
-      sampleRate: AUDIO_SAMPLE_RATE
+      sampleRate: RECORD_AUDIO_SAMPLE_RATE
     });
     return () => {
       if (websocket.current) {
@@ -52,7 +51,7 @@ const ChatInterface = () => {
   }, []);
 
   useEffect(() => {
-    if (audioQueueRef.current.length > 0 && !isPlayingRef.current) {
+    if (audioQueueRef.current.length > 0 && !isPlayingRef.current && !isTTSEndedRef.current) {
       playNextInQueue();
     }
   }, []);
@@ -126,10 +125,10 @@ const ChatInterface = () => {
   };
 
   const handleWebSocketMessage = (event) => {
-    console.log('Received WebSocket message:', event.data);
+    // console.log('Received WebSocket message:', event.data);
     if (typeof event.data === 'string') {
       const data = JSON.parse(event.data);
-      console.log('Received message:', data);
+      // console.log('Received message:', data);
       
       if (data.type === 'stt') {
         setMessages(prev => {
@@ -154,13 +153,13 @@ const ChatInterface = () => {
         });
       } else if (data.type === 'system' && data.data === 'tts_end') {
         isTTSEndedRef.current = true;
-        // // Set a timeout in case the last buffer doesn't trigger onended
-        // ttsEndTimeoutRef.current = setTimeout(() => {
-        //   if (isPlayingRef.current) {
-        //     isPlayingRef.current = false;
-        //     setIsPlaying(false);
-        //   }
-        // }, 1000); // Adjust timeout as needed
+      //   // // Set a timeout in case the last buffer doesn't trigger onended
+      //   // ttsEndTimeoutRef.current = setTimeout(() => {
+      //   //   if (isPlayingRef.current) {
+      //   //     isPlayingRef.current = false;
+      //   //     setIsPlaying(false);
+      //   //   }
+      //   // }, 1000); // Adjust timeout as needed
       } else if (data.type === 'llm') {
         setMessages(prev => {
           const newMessages = [...prev];
@@ -176,7 +175,7 @@ const ChatInterface = () => {
       }
     } else if (event.data instanceof Blob) {
       // Xử lý dữ liệu âm thanh
-      console.log('Received audio blob:', event.data);
+      // console.log('Received audio blob:', event.data);  
       event.data.arrayBuffer().then(buffer => {
         playAudioStream(buffer);
       });
@@ -188,27 +187,27 @@ const ChatInterface = () => {
       try {
         console.log('Attempting to start recording...');
         console.log(`AUDIO_CHUNK_SIZE: ${AUDIO_CHUNK_SIZE}`);
-        console.log(`AUDIO_SAMPLE_RATE: ${AUDIO_SAMPLE_RATE}`);
+        console.log(`RECORD_AUDIO_SAMPLE_RATE: ${RECORD_AUDIO_SAMPLE_RATE}`);
 
         stream.current = await navigator.mediaDevices.getUserMedia({ 
           audio: {
-            sampleRate: AUDIO_SAMPLE_RATE,
+            sampleRate: RECORD_AUDIO_SAMPLE_RATE,
             channelCount: 1,
             echoCancellation: true,
             noiseSuppression: true,
           } 
         });
-        
         console.log('Got user media stream');
 
         if (!audioContext.current) {
           audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
-            sampleRate: AUDIO_SAMPLE_RATE
+            sampleRate: RECORD_AUDIO_SAMPLE_RATE
           });
         }
         
         await audioContext.current.resume();
         console.log('Audio context resumed');
+
 
         mediaStreamSource.current = audioContext.current.createMediaStreamSource(stream.current);
         console.log('Media stream source created');
@@ -221,7 +220,7 @@ const ChatInterface = () => {
         processor.current.connect(audioContext.current.destination);
         
         setIsRecording(true);
-        console.log(`Recording started with sample rate: ${AUDIO_SAMPLE_RATE} Hz, chunk size: ${AUDIO_CHUNK_SIZE}`);
+        console.log(`Recording started with sample rate: ${RECORD_AUDIO_SAMPLE_RATE} Hz, chunk size: ${AUDIO_CHUNK_SIZE}`);
       } catch (err) {
         console.error('Error in toggleRecording:', err);
         handleRecordingError(err);
@@ -252,16 +251,6 @@ const ChatInterface = () => {
     console.log('handleAudioProcess called. isPlayingRef.current:', isPlayingRef.current);
     if (isPlayingRef.current) {
       console.log("Audio is currently playing. Skipping audio processing.");
-      
-      // Show warning toast, but limit frequency to avoid spam
-      // const currentTime = Date.now();
-      // if (currentTime - lastWarningTime > 3000) { // Show warning every 3 seconds at most
-      //   toast.warning("Recording Paused", {
-      //     description: "Recording is paused while audio is playing.",
-      //   });
-      //   setLastWarningTime(currentTime);
-      // }
-      
       return;
     }
 
@@ -314,25 +303,25 @@ const ChatInterface = () => {
   };
 
   const playNextInQueue = async () => {
-    console.log('playNextInQueue called. Queue length:', audioQueueRef.current.length);
-    console.log('isTTSEndedRef.current:', isTTSEndedRef.current);
+    // console.log('playNextInQueue called. Queue length:', audioQueueRef.current.length);
+    // console.log('isTTSEndedRef.current:', isTTSEndedRef.current);
     if (audioQueueRef.current.length === 0) {
       if (isTTSEndedRef.current) {
         console.log('Audio playback finished. No more audio in queue and TTS ended.');
         isPlayingRef.current = false;
         setIsPlaying(false);
-        setIsTTSEnded(false);
+        isTTSEndedRef.current = false;
       }
       return;
     }
 
     isPlayingRef.current = true;
     setIsPlaying(true);
-    console.log('Starting to play next audio in queue');
+    // console.log('Starting to play next audio in queue');
     const arrayBuffer = audioQueueRef.current.shift();
 
     try {
-      const audioBuffer = audioContext.current.createBuffer(1, arrayBuffer.byteLength / 2, AUDIO_SAMPLE_RATE);
+      const audioBuffer = audioContext.current.createBuffer(1, arrayBuffer.byteLength / 2, PLAYBACK_AUDIO_SAMPLE_RATE);
       const channelData = audioBuffer.getChannelData(0);
       const int16Array = new Int16Array(arrayBuffer);
 
@@ -342,13 +331,13 @@ const ChatInterface = () => {
 
       const source = audioContext.current.createBufferSource();
       source.buffer = audioBuffer;
-      source.playbackRate.value = DEFAULT_PLAYBACK_RATE; // Thêm dòng này
+      source.playbackRate.value = DEFAULT_PLAYBACK_RATE;
       source.connect(audioContext.current.destination);
       source.start();
 
       source.onended = () => {
-        console.log('Audio buffer playback finished.');
-        if (audioQueueRef.current.length === 0 && isTTSEndedRef.current) {
+        // console.log('Audio buffer playback finished.');
+        if (audioQueueRef.current.length === 0) {
           console.log('All audio playback finished.');
           isPlayingRef.current = false;
           setIsPlaying(false);
@@ -363,8 +352,6 @@ const ChatInterface = () => {
     }
   };
   
-  
-
   const handleSendMessage = () => {
     if (inputMessage.trim() && isConnected) {
       setMessages(prev => [...prev, { role: 'user', content: inputMessage.trim() }]);
@@ -396,11 +383,11 @@ const ChatInterface = () => {
           onChange={(e) => setInputMessage(e.target.value)}
           onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
           className="flex-grow"
-          disabled={!isConnected}
+          disabled={!isConnected || isRecording}
         />
         <Button 
           onClick={handleSendMessage}
-          disabled={!isConnected || !inputMessage.trim()}
+          disabled={!isConnected || !inputMessage.trim() || isRecording}
         >
           <SendIcon className="h-4 w-4" />
         </Button>
