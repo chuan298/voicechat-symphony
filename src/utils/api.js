@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = 'https://callbot.vnpaytest.local/api';
 const FETCH_TIMEOUT = 5000;
 
 const fetchWithTimeout = async (url, options) => {
@@ -45,6 +45,6 @@ export const setUsername = async (username) => {
 };
 
 export const connectWebSocket = (sessionId) => {
-  const ws = new WebSocket(`ws://localhost:8000/api/ws/${sessionId}`);
+  const ws = new WebSocket(`wss://callbot.vnpaytest.local/api/ws/${sessionId}`);
   return ws;
 };

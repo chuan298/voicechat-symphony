@@ -10,7 +10,8 @@ import { setUsername, connectWebSocket } from '../utils/api';
 import { arrayBufferToBase64 } from '../utils/audioUtils';
 import { encodeWAV } from '../utils/audioUtils';
 
-const AUDIO_CHUNK_SIZE = 1024; 
+const AUDIO_CHUNK_SIZE = 4096; // Tăng kích thước buffer
+const SEND_CHUNK_SIZE = 1024; // Kích thước chunk khi gửi
 const RECORD_AUDIO_SAMPLE_RATE = 16000; // 16 kHz sample rate
 const PLAYBACK_AUDIO_SAMPLE_RATE = 22050;
 const DEFAULT_PLAYBACK_RATE = 1;
@@ -247,6 +248,15 @@ const ChatInterface = () => {
     console.log('Recording stopped');
   };
 
+  const floatTo16BitPCM = (input) => {
+    const output = new Int16Array(input.length);
+    for (let i = 0; i < input.length; i++) {
+      const s = Math.max(-1, Math.min(1, input[i]));
+      output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return output;
+  };
+
   const handleAudioProcess = (e) => {
     console.log('handleAudioProcess called. isPlayingRef.current:', isPlayingRef.current);
     if (isPlayingRef.current) {
@@ -256,15 +266,14 @@ const ChatInterface = () => {
 
     if (websocket.current && websocket.current.readyState === WebSocket.OPEN) {
       const inputData = e.inputBuffer.getChannelData(0);
-      const int16Array = new Int16Array(AUDIO_CHUNK_SIZE);
+      const int16Array = floatTo16BitPCM(inputData);
       
-      for (let i = 0; i < AUDIO_CHUNK_SIZE; i++) {
-        int16Array[i] = Math.max(-32768, Math.min(32767, Math.floor(inputData[i] * 32767)));
+      // Gửi dữ liệu theo từng chunk nhỏ hơn
+      for (let i = 0; i < int16Array.length; i += SEND_CHUNK_SIZE) {
+        const chunk = int16Array.slice(i, i + SEND_CHUNK_SIZE).buffer;
+        console.log(`Sending audio chunk of size: ${chunk.byteLength} bytes`);
+        websocket.current.send(chunk);
       }
-      
-      const chunk = int16Array.buffer;
-      console.log(`Sending audio chunk of size: ${chunk.byteLength} bytes`);
-      websocket.current.send(chunk);
     }
   };
 
