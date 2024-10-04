@@ -11,7 +11,7 @@ import { arrayBufferToBase64 } from '../utils/audioUtils';
 import { encodeWAV } from '../utils/audioUtils';
 
 const AUDIO_CHUNK_SIZE = 4096; // Tăng kích thước buffer
-const SEND_CHUNK_SIZE = 1024; // Kích thước chunk khi gửi
+const SEND_CHUNK_SIZE = 4096; // Kích thước chunk khi gửi
 const RECORD_AUDIO_SAMPLE_RATE = 16000; // 16 kHz sample rate
 const PLAYBACK_AUDIO_SAMPLE_RATE = 22050;
 const DEFAULT_PLAYBACK_RATE = 1;
@@ -36,6 +36,7 @@ const ChatInterface = () => {
   // const [isTTSEnded, setIsTTSEnded] = useState(false);
   const isTTSEndedRef = useRef(false);
   const ttsEndTimeoutRef = useRef(null);
+  const isAudioSendingPausedRef = useRef(false);
 
   useEffect(() => {
     audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
@@ -126,7 +127,7 @@ const ChatInterface = () => {
   };
 
   const handleWebSocketMessage = (event) => {
-    // console.log('Received WebSocket message:', event.data);
+    console.log('Received WebSocket message:', event.data);
     if (typeof event.data === 'string') {
       const data = JSON.parse(event.data);
       // console.log('Received message:', data);
@@ -144,6 +145,7 @@ const ChatInterface = () => {
           return newMessages;
         });
       } else if (data.type === 'system' && data.data === 'stt_end') {
+        isAudioSendingPausedRef.current = true;
         // Khi nhận được tín hiệu kết thúc STT, chuẩn bị cho tin nhắn bot tiếp theo
         setMessages(prev => {
           if (prev[prev.length - 1].role === 'user') {
@@ -258,9 +260,9 @@ const ChatInterface = () => {
   };
 
   const handleAudioProcess = (e) => {
-    console.log('handleAudioProcess called. isPlayingRef.current:', isPlayingRef.current);
-    if (isPlayingRef.current) {
-      console.log("Audio is currently playing. Skipping audio processing.");
+    //console.log('handleAudioProcess called. isPlayingRef.current:', isPlayingRef.current);
+    if (isPlayingRef.current || isAudioSendingPausedRef.current) {
+      //console.log("Audio is currently playing. Skipping audio processing.");
       return;
     }
 
@@ -351,6 +353,7 @@ const ChatInterface = () => {
           isPlayingRef.current = false;
           setIsPlaying(false);
           isTTSEndedRef.current = false;
+          isAudioSendingPausedRef.current = false;
         }
         playNextInQueue();
       };

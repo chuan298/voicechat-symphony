@@ -46,5 +46,6 @@ export const setUsername = async (username) => {
 
 export const connectWebSocket = (sessionId) => {
   const ws = new WebSocket(`wss://callbot.vnpaytest.local/api/ws/${sessionId}`);
+  //const ws = new WebSocket(`ws://localhost:8000/api/ws/${sessionId}`);
   return ws;
 };
