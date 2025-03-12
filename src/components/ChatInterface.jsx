@@ -13,8 +13,13 @@ import { encodeWAV } from '../utils/audioUtils';
 const AUDIO_CHUNK_SIZE = 4096; // Tăng kích thước buffer
 const SEND_CHUNK_SIZE = 512; // Kích thước chunk khi gửi
 const RECORD_AUDIO_SAMPLE_RATE = 16000; // 16 kHz sample rate
-const PLAYBACK_AUDIO_SAMPLE_RATE = 22050;
+const PLAYBACK_AUDIO_SAMPLE_RATE = 8000;
 const DEFAULT_PLAYBACK_RATE = 1;
+let audioMetrics = {
+  chunksProcessed: 0,
+  bytesProcessed: 0,
+  lastChunkTime: Date.now()
+};
 
 const ChatInterface = () => {
   const [messages, setMessages] = useState([]);
@@ -24,28 +29,36 @@ const ChatInterface = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [inputMessage, setInputMessage] = useState('');
+  const [isPlaying, setIsPlaying] = useState(false);
+  
+  // Refs for audio handling
   const audioContext = useRef(null);
   const websocket = useRef(null);
-  const lastBotMessageRef = useRef(null);
   const mediaStreamSource = useRef(null);
   const processor = useRef(null);
   const stream = useRef(null);
-  const [isPlaying, setIsPlaying] = useState(false);
+
+  const workletNode = useRef(null);
+  
+  // Audio playback management
+  const currentAudioSourceRef = useRef(null);
+  const currentPlayingResponseIdRef = useRef(null);
   const audioQueueRef = useRef([]);
   const isPlayingRef = useRef(false);
-  // const [isTTSEnded, setIsTTSEnded] = useState(false);
   const isTTSEndedRef = useRef(false);
-  const ttsEndTimeoutRef = useRef(null);
-  const isAudioSendingPausedRef = useRef(false);
+  const audioPlaybackTimeoutRef = useRef(null);
+  const lastBotMessageRef = useRef(null);
+
+  const heartbeatInterval = useRef(null);
+  const reconnectAttempts = useRef(0);
+  const MAX_RECONNECT_ATTEMPTS = 5;
 
   useEffect(() => {
     audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
       sampleRate: RECORD_AUDIO_SAMPLE_RATE
     });
     return () => {
-      if (websocket.current) {
-        websocket.current.close();
-      }
+      cleanupAudio();
       if (audioContext.current) {
         audioContext.current.close();
       }
@@ -57,6 +70,66 @@ const ChatInterface = () => {
       playNextInQueue();
     }
   }, []);
+
+  useEffect(() => {
+    const initAudioContext = async () => {
+      audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
+        sampleRate: RECORD_AUDIO_SAMPLE_RATE
+      });
+      
+      // Load audio worklet
+      try {
+        await audioContext.current.audioWorklet.addModule('/data2/ancv/CHATBOT/voicechat-symphony/src/components/AudioProcessor.js');
+      } catch (error) {
+        console.error('Error loading audio worklet:', error);
+      }
+    };
+
+    initAudioContext();
+    return () => {
+      cleanupAudio();
+      if (audioContext.current) {
+        audioContext.current.close();
+      }
+    };
+  }, []);
+
+
+  const cleanupAudio = () => {
+    // Cleanup AudioWorklet
+    if (workletNode.current) {
+      try {
+        workletNode.current.port.postMessage({ type: 'stop' });
+        workletNode.current.disconnect();
+        workletNode.current = null;
+      } catch (error) {
+        console.error('Error cleaning up worklet node:', error);
+      }
+    }
+  
+    // Cleanup MediaStream
+    if (stream.current) {
+      try {
+        stream.current.getTracks().forEach(track => track.stop());
+        stream.current = null;
+      } catch (error) {
+        console.error('Error cleaning up media stream:', error);
+      }
+    }
+  
+    // Cleanup AudioContext
+    if (audioContext.current) {
+      try {
+        if (audioContext.current.state !== 'closed') {
+          audioContext.current.close();
+        }
+      } catch (error) {
+        console.error('Error closing audio context:', error);
+      }
+    }
+  
+    setIsRecording(false);
+  };
 
   const handleSetUsername = async () => {
     if (!username) {
@@ -82,19 +155,36 @@ const ChatInterface = () => {
 
   const initializeWebSocket = async (sessionId) => {
     setIsConnecting(true);
-    toast.info("Connecting", {
-      description: "Attempting to connect to the server...",
-    });
     try {
       const ws = connectWebSocket(sessionId);
       websocket.current = ws;
       
-      ws.onopen = handleWebSocketOpen;
-      ws.onclose = handleWebSocketClose;
+      ws.onopen = () => {
+        handleWebSocketOpen();
+        reconnectAttempts.current = 0;
+      };
+  
+      ws.onclose = (event) => {
+        handleWebSocketClose(event);
+        // attemptReconnect();
+      };
+  
       ws.onerror = handleWebSocketError;
       ws.onmessage = handleWebSocketMessage;
     } catch (error) {
       handleConnectionError(error);
+    }
+  };
+
+  const attemptReconnect = () => {
+    if (reconnectAttempts.current < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts.current++;
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
+      setTimeout(() => {
+        if (username) {
+          initializeWebSocket(username);
+        }
+      }, delay);
     }
   };
 
@@ -126,71 +216,144 @@ const ChatInterface = () => {
     });
   };
 
+  // Cleanup function for all audio resources
+  const cleanupAudioByResponseId = (responseId) => {
+    console.log('Cleaning up audio for response ID:', responseId, currentPlayingResponseIdRef.current);
+    
+    // Nếu đang phát audio với responseId này thì dừng lại
+    if (currentPlayingResponseIdRef.current === responseId && currentAudioSourceRef.current) {
+      try {
+        currentAudioSourceRef.current.stop();
+        currentAudioSourceRef.current.disconnect();
+        currentAudioSourceRef.current = null;
+      } catch (error) {
+        console.error('Error stopping current audio:', error);
+      }
+    }
+
+    // Lọc queue để chỉ giữ lại các audio có response_id khác
+    // audioQueueRef.current = audioQueueRef.current.filter(
+    //   item => item.responseId !== responseId
+    // );
+    audioQueueRef.current = [];
+    // audioQueueRef.current = [];
+    // Reset các state nếu không còn audio nào trong queue
+    if (audioQueueRef.current.length === 0) {
+      if (currentAudioSourceRef.current){
+        try {
+          currentAudioSourceRef.current.stop();
+          currentAudioSourceRef.current.disconnect();
+          currentAudioSourceRef.current = null;
+        } catch (error) {
+          console.error('Error stopping current audio:', error);
+        }
+      }
+      
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      currentPlayingResponseIdRef.current = null;
+    } 
+    else if (currentPlayingResponseIdRef.current === responseId) {
+      // Nếu vừa dừng audio hiện tại, phát audio tiếp theo trong queue
+      playNextInQueue();
+    }
+  };
+
   const handleWebSocketMessage = (event) => {
-    console.log('Received WebSocket message:', event.data);
     if (typeof event.data === 'string') {
       const data = JSON.parse(event.data);
       // console.log('Received message:', data);
-      
-      if (data.type === 'stt') {
+      if (data.type == "metrics_final"){
+        console.log('Received metrics_final:', data);
+      }
+      else if (data.type === 'system') {
+        switch (data.data) {
+          case 'bot_interrupt':
+            console.log('Bot interrupted - cleaning up audio for response ID:', data.response_id);
+            cleanupAudioByResponseId(data.response_id);
+            break;
+          case 'stt_end':
+            setMessages(prev => {
+              if (prev[prev.length - 1]?.role === 'user') {
+                return [...prev, { role: 'bot', content: '' }];
+              }
+              return prev;
+            });
+            break;
+          case 'tts_end':
+            isTTSEndedRef.current = true;
+            break;
+        }
+      } else if (data.type === 'audio') {
+        // Thêm logging để debug
+        console.log('Received audio data length:', data.data.length);
+        
+        const binaryString = atob(data.data);
+        console.log('Binary string length:', binaryString.length);
+        
+        const buffer = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          buffer[i] = binaryString.charCodeAt(i);
+        }
+        
+        // Kiểm tra kích thước buffer
+        if (buffer.length === 0) {
+          console.error('Received empty audio buffer');
+          return;
+        }
+  
+        const arrayBuffer = buffer.buffer;
+        const audioItem = {
+          buffer: arrayBuffer,
+          responseId: data.response_id
+        };
+  
+        if (!isPlayingRef.current) {
+          playAudioStream(audioItem);
+        } else {
+          audioQueueRef.current.push(audioItem);
+        }
+      }
+      else if (data.type === 'stt') {
         setMessages(prev => {
           const newMessages = [...prev];
           if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'user') {
-            // Cập nhật tin nhắn cuối cùng của người dùng
             newMessages[newMessages.length - 1].content = data.data;
           } else {
-            // Nếu không có tin nhắn người dùng, tạo mới
             newMessages.push({ role: 'user', content: data.data });
           }
           return newMessages;
         });
-      } else if (data.type === 'system' && data.data === 'stt_end') {
-        isAudioSendingPausedRef.current = true;
-        // Khi nhận được tín hiệu kết thúc STT, chuẩn bị cho tin nhắn bot tiếp theo
-        setMessages(prev => {
-          if (prev[prev.length - 1].role === 'user') {
-            // Chỉ thêm tin nhắn bot mới nếu tin nhắn cuối cùng là của user
-            return [...prev, { role: 'bot', content: '' }];
-          }
-          return prev;
-        });
-      } else if (data.type === 'system' && data.data === 'tts_end') {
-        isTTSEndedRef.current = true;
-      //   // // Set a timeout in case the last buffer doesn't trigger onended
-      //   // ttsEndTimeoutRef.current = setTimeout(() => {
-      //   //   if (isPlayingRef.current) {
-      //   //     isPlayingRef.current = false;
-      //   //     setIsPlaying(false);
-      //   //   }
-      //   // }, 1000); // Adjust timeout as needed
       } else if (data.type === 'llm') {
         setMessages(prev => {
           const newMessages = [...prev];
           if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'bot') {
-            // Append vào tin nhắn bot cuối cùng
             newMessages[newMessages.length - 1].content += data.data;
           } else {
-            // Tạo tin nhắn bot mới nếu cần
             newMessages.push({ role: 'bot', content: data.data });
           }
           return newMessages;
         });
       }
-    } else if (event.data instanceof Blob) {
-      // Xử lý dữ liệu âm thanh
-      // console.log('Received audio blob:', event.data);  
-      event.data.arrayBuffer().then(buffer => {
-        playAudioStream(buffer);
-      });
-    }
+    } 
   };
 
   const toggleRecording = async () => {
     if (!isRecording) {
       try {
-        console.log('Attempting to start recording...');
-        console.log(`AUDIO_CHUNK_SIZE: ${AUDIO_CHUNK_SIZE}`);
-        console.log(`RECORD_AUDIO_SAMPLE_RATE: ${RECORD_AUDIO_SAMPLE_RATE}`);
+        // Cleanup các resources cũ nếu có
+        if (workletNode.current) {
+          workletNode.current.disconnect();
+          workletNode.current = null;
+        }
+
+        // Kiểm tra và khởi tạo lại AudioContext nếu cần
+        if (audioContext.current?.state === 'closed') {
+          audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: RECORD_AUDIO_SAMPLE_RATE
+          });
+          await audioContext.current.audioWorklet.addModule('/data2/ancv/CHATBOT/voicechat-symphony/src/components/AudioProcessor.js');
+        }
 
         stream.current = await navigator.mediaDevices.getUserMedia({ 
           audio: {
@@ -200,30 +363,50 @@ const ChatInterface = () => {
             noiseSuppression: true,
           } 
         });
-        console.log('Got user media stream');
 
-        if (!audioContext.current) {
-          audioContext.current = new (window.AudioContext || window.webkitAudioContext)({
-            sampleRate: RECORD_AUDIO_SAMPLE_RATE
-          });
-        }
-        
         await audioContext.current.resume();
-        console.log('Audio context resumed');
-
-
+        
         mediaStreamSource.current = audioContext.current.createMediaStreamSource(stream.current);
-        console.log('Media stream source created');
+        
+        workletNode.current = new AudioWorkletNode(
+          audioContext.current,
+          'audio-recorder-processor',
+          {
+            processorOptions: {
+              chunkSize: SEND_CHUNK_SIZE
+            }
+          }
+        );
 
-        processor.current = audioContext.current.createScriptProcessor(AUDIO_CHUNK_SIZE, 1, 1);
-        console.log(`Script processor created with buffer size: ${AUDIO_CHUNK_SIZE}`);
+        // Xử lý messages từ AudioWorklet
+        workletNode.current.port.onmessage = (event) => {
+          if (event.data.type === 'audio-data') {
+            audioMetrics.chunksProcessed++;
+            audioMetrics.bytesProcessed += event.data.data.byteLength;
+            audioMetrics.lastChunkTime = Date.now();
+        
+            // Log metrics mỗi 1000 chunks
+            if (audioMetrics.chunksProcessed % 1000 === 0) {
+              console.log('Audio Metrics:', {
+                chunksProcessed: audioMetrics.chunksProcessed,
+                totalMB: (audioMetrics.bytesProcessed / (1024 * 1024)).toFixed(2),
+                avgChunkSize: (audioMetrics.bytesProcessed / audioMetrics.chunksProcessed).toFixed(2)
+              });
+            }
+            
+            // Gửi data như bình thường
+            if (websocket.current?.readyState === WebSocket.OPEN) {
+              websocket.current.send(event.data.data);
+            }
+          }
+        };
 
-        processor.current.onaudioprocess = handleAudioProcess;
-        mediaStreamSource.current.connect(processor.current);
-        processor.current.connect(audioContext.current.destination);
+        mediaStreamSource.current.connect(workletNode.current);
+        workletNode.current.connect(audioContext.current.destination);
         
         setIsRecording(true);
-        console.log(`Recording started with sample rate: ${RECORD_AUDIO_SAMPLE_RATE} Hz, chunk size: ${AUDIO_CHUNK_SIZE}`);
+        console.log('Recording started with AudioWorklet');
+
       } catch (err) {
         console.error('Error in toggleRecording:', err);
         handleRecordingError(err);
@@ -234,9 +417,9 @@ const ChatInterface = () => {
   };
 
   const stopRecording = () => {
-    if (processor.current) {
-      processor.current.disconnect();
-      processor.current = null;
+    if (workletNode.current) {
+      workletNode.current.disconnect();
+      workletNode.current = null;
     }
     if (mediaStreamSource.current) {
       mediaStreamSource.current.disconnect();
@@ -261,10 +444,10 @@ const ChatInterface = () => {
 
   const handleAudioProcess = (e) => {
     //console.log('handleAudioProcess called. isPlayingRef.current:', isPlayingRef.current);
-    if (isPlayingRef.current || isAudioSendingPausedRef.current) {
-      //console.log("Audio is currently playing. Skipping audio processing.");
-      return;
-    }
+    // if (isPlayingRef.current || isAudioSendingPausedRef.current) {
+    //   //console.log("Audio is currently playing. Skipping audio processing.");
+    //   return;
+    // }
 
     if (websocket.current && websocket.current.readyState === WebSocket.OPEN) {
       const inputData = e.inputBuffer.getChannelData(0);
@@ -287,87 +470,76 @@ const ChatInterface = () => {
     setIsRecording(false);
   };
 
-  const playAudioStream = async (audioData) => {
+  const playAudioStream = async (audioItem) => {
+    console.log('playAudioStream called with audioItem:', audioItem);
+    if (!audioContext.current) return;
+  
     try {
-      let arrayBuffer;
-      if (audioData instanceof ArrayBuffer) {
-        arrayBuffer = audioData;
-      } else if (audioData.arrayBuffer) {
-        arrayBuffer = await audioData.arrayBuffer();
-      } else {
-        throw new Error("Unsupported audio data type received");
+      // Kiểm tra buffer có hợp lệ không
+      if (!audioItem.buffer || audioItem.buffer.byteLength === 0) {
+        console.error('Invalid audio buffer received:', audioItem);
+        throw new Error('Invalid audio buffer');
       }
-
-      console.log('Adding audio to queue. Current queue length:', audioQueueRef.current.length);
-      audioQueueRef.current.push(arrayBuffer);
+  
+      isPlayingRef.current = true;
+      setIsPlaying(true);
+      currentPlayingResponseIdRef.current = audioItem.responseId;
+  
+      // Tính toán số frames
+      const numberOfFrames = Math.floor(audioItem.buffer.byteLength / 2);
       
-      if (!isPlayingRef.current) {
-        console.log('Starting audio playback');
-        playNextInQueue();
+      // Kiểm tra số frames có hợp lệ không
+      if (numberOfFrames <= 0) {
+        throw new Error('Invalid number of frames');
       }
+  
+      const audioBuffer = audioContext.current.createBuffer(
+        1, // số channels
+        numberOfFrames,
+        PLAYBACK_AUDIO_SAMPLE_RATE
+      );
+      
+      const channelData = audioBuffer.getChannelData(0);
+      const int16Array = new Int16Array(audioItem.buffer);
+  
+      for (let i = 0; i < int16Array.length; i++) {
+        channelData[i] = int16Array[i] / 32768.0;
+      }
+  
+      const source = audioContext.current.createBufferSource();
+      currentAudioSourceRef.current = source;
+      source.buffer = audioBuffer;
+      source.connect(audioContext.current.destination);
+  
+      source.onended = () => {
+        currentAudioSourceRef.current = null;
+        playNextInQueue();
+      };
+  
+      source.start(0);
     } catch (error) {
-      console.error('Error handling audio stream:', error);
-      toast.error("Audio Error", {
-        description: "An error occurred while processing the audio data.",
-      });
+      console.error('Error playing audio:', error);
+      currentAudioSourceRef.current = null;
+      playNextInQueue();
     }
   };
 
-  const playNextInQueue = async () => {
-    // console.log('playNextInQueue called. Queue length:', audioQueueRef.current.length);
-    // console.log('isTTSEndedRef.current:', isTTSEndedRef.current);
+  const playNextInQueue = () => {
     if (audioQueueRef.current.length === 0) {
-      if (isTTSEndedRef.current) {
-        console.log('Audio playback finished. No more audio in queue and TTS ended.');
-        isPlayingRef.current = false;
-        setIsPlaying(false);
-        isTTSEndedRef.current = false;
-      }
+      isPlayingRef.current = false;
+      setIsPlaying(false);
+      currentPlayingResponseIdRef.current = null;
       return;
     }
 
-    isPlayingRef.current = true;
-    setIsPlaying(true);
-    // console.log('Starting to play next audio in queue');
-    const arrayBuffer = audioQueueRef.current.shift();
-
-    try {
-      const audioBuffer = audioContext.current.createBuffer(1, arrayBuffer.byteLength / 2, PLAYBACK_AUDIO_SAMPLE_RATE);
-      const channelData = audioBuffer.getChannelData(0);
-      const int16Array = new Int16Array(arrayBuffer);
-
-      for (let i = 0; i < int16Array.length; i++) {
-        channelData[i] = int16Array[i] / 32768.0; // Convert Int16 to Float32
-      }
-
-      const source = audioContext.current.createBufferSource();
-      source.buffer = audioBuffer;
-      source.playbackRate.value = DEFAULT_PLAYBACK_RATE;
-      source.connect(audioContext.current.destination);
-      source.start();
-
-      source.onended = () => {
-        // console.log('Audio buffer playback finished.');
-        if (audioQueueRef.current.length === 0) {
-          console.log('All audio playback finished.');
-          isPlayingRef.current = false;
-          setIsPlaying(false);
-          isTTSEndedRef.current = false;
-          isAudioSendingPausedRef.current = false;
-        }
-        playNextInQueue();
-      };
-
-    } catch (error) {
-      console.error('Error playing audio:', error);
-      playNextInQueue(); // Try to play the next audio if there's an error
-    }
+    const nextAudio = audioQueueRef.current.shift();
+    playAudioStream(nextAudio);
   };
   
   const handleSendMessage = () => {
     if (inputMessage.trim() && isConnected) {
       setMessages(prev => [...prev, { role: 'user', content: inputMessage.trim() }]);
-      websocket.current.send(JSON.stringify({ text: inputMessage.trim() }));
+      websocket.current.send(inputMessage.trim());
       setInputMessage('');
       lastBotMessageRef.current = null;
     }
@@ -405,7 +577,7 @@ const ChatInterface = () => {
         </Button>
         <Button 
           onClick={toggleRecording} 
-          disabled={!isConnected || isPlaying}
+          disabled={!isConnected}
           className={`${isRecording ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'}`}
         >
           {isRecording ? <MicOffIcon className="h-4 w-4" /> : <MicIcon className="h-4 w-4" />}

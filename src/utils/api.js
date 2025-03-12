@@ -61,8 +61,8 @@ export const setUsername = async (username) => {
 
 export const connectWebSocket = (username) => {
   const ws = new WebSocket(
-    `wss://callbot.vnpaytest.local/api/ws/voicebot?user_id=${encodeURIComponent(username)}`,
-    // `ws://localhost:8000/api/ws/voicebot?phone_number=${encodeURIComponent(username)}`,
+    `wss://callbot.vnpaytest.local/api/ws/voicebot?phone_number=${encodeURIComponent(username)}`,
+    //`ws://localhost:8999/api/ws/voicebot?phone_number=${encodeURIComponent(username)}`,
     [], // protocols
     {
       headers: {

@@ -7,7 +7,7 @@ const ConnectionControls = ({ username, setUsername, isConnected, isConnecting, 
     <div className="mb-4 flex items-center space-x-2">
       <Input
         type="text"
-        placeholder="Enter username"
+        placeholder="Enter phone number"
         value={username}
         onChange={(e) => setUsername(e.target.value)}
         className="flex-grow"
