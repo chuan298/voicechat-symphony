@@ -44,25 +44,11 @@ export const setUsername = async (username) => {
   }
 };
 
-// export const connectWebSocket = (username) => {
-//   const ws = new WebSocket(
-//     `wss://callbot.vnpaytest.local/api/ws/voicebot`,
-//     [], // protocols
-//     {
-//       headers: {
-//         'Authorization': `Bearer ${username}`
-//       }
-//     }
-//   );
-//   //const ws = new WebSocket(`ws://localhost:8000/api/ws/${sessionId}`);
-//   return ws;
-// };
 
 
 export const connectWebSocket = (username) => {
   const ws = new WebSocket(
-    `wss://callbot.vnpaytest.local/api/ws/voicebot?phone_number=${encodeURIComponent(username)}`,
-    //`ws://localhost:8999/api/ws/voicebot?phone_number=${encodeURIComponent(username)}`,
+    `ws://localhost:1234/api/ws/voicebot?phone_number=${encodeURIComponent(username)}`,
     [], // protocols
     {
       headers: {
@@ -71,6 +57,5 @@ export const connectWebSocket = (username) => {
       }
     }
   );
-  //const ws = new WebSocket(`ws://localhost:8000/api/ws/${sessionId}`);
   return ws;
 };
